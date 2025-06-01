@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# service-monitor.yaml — Prometheus ServiceMonitor objects
+#
+# Prerequisites:
+#   • kube-prometheus-stack (or prometheus-operator) installed on the cluster.
+#     The CRD `monitoring.coreos.com/v1/ServiceMonitor` must exist.
+#   • The Prometheus Operator is configured with a serviceMonitorSelector that
+#     matches the labels below (release: kube-prometheus-stack is the default
+#     for helm install --name kube-prometheus-stack).
+#   • The omnivara-api and omnivara-ai Services already exist (applied from
+#     api-deployment.yaml and ai-deployment.yaml).
+#
+# Scrape endpoints:
+#   • API  — port 3001, path /api/v1/metrics  (NestJS prom-client endpoint)
+#   • AI   — port 8000, path /metrics         (FastAPI prometheus_fastapi_instrumentator)
+#
+# Apply with:
+#   kubectl apply -f infra/k8s/service-monitor.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── API ServiceMonitor ───────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: omnivara-api-monitor
+  namespace: omnivara
+  labels:
+    app: omnivara-api
+    # This label must match the Prometheus Operator's serviceMonitorSelector.
+    # Default for kube-prometheus-stack Helm chart:
+    release: kube-prometheus-stack
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # Select the omnivara-api Service in the omnivara namespace.
+  selector:
+    matchLabels:
+      app: omnivara-api
+  namespaceSelector:
+    matchNames:
+      - omnivara
+  endpoints:
+    - # The NestJS API exposes Prometheus metrics via @willsoto/nestjs-prometheus
+      # or a custom /api/v1/metrics controller.  The service port is named "http"
+      # and forwards to container port 3001.
+      port: http
+      path: /api/v1/metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      # Honor labels set by the application (e.g. tenant_id).
+      honorLabels: false
+      # Relabelling: attach a job label for easier Grafana dashboard filtering.
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - targetLabel: job
+          replacement: omnivara-api
+
+---
+# ─── AI ServiceMonitor ────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: omnivara-ai-monitor
+  namespace: omnivara
+  labels:
+    app: omnivara-ai
+    release: kube-prometheus-stack
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  selector:
+    matchLabels:
+      app: omnivara-ai
+  namespaceSelector:
+    matchNames:
+      - omnivara
+  endpoints:
+    - # The FastAPI AI service exposes Prometheus metrics via
+      # prometheus_fastapi_instrumentator mounted at /metrics.
+      port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      honorLabels: false
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - targetLabel: job
+          replacement: omnivara-ai

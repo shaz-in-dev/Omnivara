@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: omnivara
+  labels:
+    app.kubernetes.io/name: omnivara
+    app.kubernetes.io/managed-by: kubectl

@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# pod-disruption-budgets.yaml — PodDisruptionBudgets for Omnivara services
+#
+# PodDisruptionBudgets (PDBs) prevent Kubernetes voluntary disruptions
+# (node drain, cluster upgrades, rolling updates) from taking down all
+# replicas of a service simultaneously.
+#
+# minAvailable: 1 means at least one replica must remain available at all
+# times during a voluntary disruption.  This is appropriate for Deployments
+# with replicas >= 2.  If a Deployment is scaled down to 1 replica the PDB
+# will block drains — scale up first or temporarily delete the PDB.
+#
+# Apply with:
+#   kubectl apply -f infra/k8s/pod-disruption-budgets.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── API PodDisruptionBudget ──────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: omnivara-api-pdb
+  namespace: omnivara
+  labels:
+    app: omnivara-api
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # At least 1 API replica must be available during voluntary disruptions.
+  # With the default replica count of 2 this allows 1 pod to be evicted at
+  # a time, enabling safe rolling node drains and cluster upgrades.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: omnivara-api
+
+---
+# ─── Web PodDisruptionBudget ──────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: omnivara-web-pdb
+  namespace: omnivara
+  labels:
+    app: omnivara-web
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # At least 1 web (Next.js) replica must remain available.
+  # Matches the 2-replica default in web-deployment.yaml.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: omnivara-web
+
+---
+# ─── AI PodDisruptionBudget ───────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: omnivara-ai-pdb
+  namespace: omnivara
+  labels:
+    app: omnivara-ai
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # At least 1 AI service replica must remain available.
+  # NOTE: ai-deployment.yaml defaults to replicas: 1.  If this PDB is applied
+  # with only 1 replica running, voluntary eviction of that pod will be blocked
+  # until a second replica is scheduled.  Scale the AI Deployment to >= 2
+  # replicas in production or increase the HPA minReplicas to 2 before
+  # applying this PDB to a live cluster.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: omnivara-ai

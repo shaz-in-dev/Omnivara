@@ -1,0 +1,130 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# prometheus-rules.yaml — PrometheusRule alerting rules
+#
+# Prerequisites:
+#   • kube-prometheus-stack installed (provides the PrometheusRule CRD).
+#   • Alertmanager configured with a receiver (Slack, PagerDuty, email, etc.).
+#   • The omnivara-api NestJS service exposes:
+#       http_request_duration_seconds_count{status_code}  — request counters
+#       up{job="omnivara-api"}                            — scrape target liveness
+#   • The omnivara-ai FastAPI service exposes:
+#       http_requests_total{status_code}                  — request counters
+#       up{job="omnivara-ai"}                             — scrape target liveness
+#
+# Metric name conventions follow the defaults of @willsoto/nestjs-prometheus
+# and prometheus_fastapi_instrumentator.  Adjust label names if your
+# instrumentation differs.
+#
+# Apply with:
+#   kubectl apply -f infra/k8s/prometheus-rules.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: omnivara-alerting-rules
+  namespace: omnivara
+  labels:
+    # Must match the Prometheus Operator's ruleSelector.
+    # Default for kube-prometheus-stack:
+    release: kube-prometheus-stack
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  groups:
+    # ─── Group 1: API Error Rate ──────────────────────────────────────────────
+    - name: omnivara.api.error_rate
+      # Evaluate these expressions every 30 seconds.
+      interval: 30s
+      rules:
+        - alert: APIHighErrorRate
+          # Fire when more than 5% of requests over the last 5 minutes return
+          # an HTTP 5xx status code.
+          #
+          # Expression breakdown:
+          #   sum(rate(http_requests_total{job="omnivara-api",status_code=~"5.."}[5m]))
+          #     — rate of 5xx requests per second (API)
+          #   /
+          #   sum(rate(http_requests_total{job="omnivara-api"}[5m]))
+          #     — rate of ALL requests per second (API)
+          #   > 0.05  — threshold: 5%
+          #
+          # We also guard against division-by-zero when there is no traffic.
+          expr: |
+            (
+              sum(rate(http_requests_total{job="omnivara-api", status_code=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{job="omnivara-api"}[5m]))
+            ) > 0.05
+          # Fire only after the condition is true for 5 minutes continuously.
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: omnivara-api
+          annotations:
+            summary: "High 5xx error rate on omnivara-api"
+            description: >-
+              More than 5% of API requests are returning 5xx errors over the
+              last 5 minutes.
+              Current value: {{ $value | humanizePercentage }}
+            runbook_url: "https://docs.omnivara.io/runbooks/api-high-error-rate"
+
+    # ─── Group 2: Pod Availability ────────────────────────────────────────────
+    - name: omnivara.pod.availability
+      interval: 30s
+      rules:
+        - alert: APIPodDown
+          # Fire when any Omnivara pod (api, web, or ai) has been non-running
+          # (i.e. the `up` metric is 0) for more than 2 minutes.
+          #
+          # The `up` metric is set to 1 by Prometheus when a scrape target is
+          # reachable and 0 when the scrape fails (pod crashed / not ready).
+          # We broaden the selector to cover all omnivara jobs so that a single
+          # rule catches outages across all three services.
+          expr: |
+            up{namespace="omnivara", job=~"omnivara-(api|web|ai)"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Omnivara pod {{ $labels.job }} is down"
+            description: >-
+              Prometheus scrape target {{ $labels.job }} (pod {{ $labels.pod }})
+              in namespace {{ $labels.namespace }} has been unreachable for more
+              than 2 minutes.
+            runbook_url: "https://docs.omnivara.io/runbooks/pod-down"
+
+    # ─── Group 3: Redis Connectivity ─────────────────────────────────────────
+    - name: omnivara.redis.connectivity
+      interval: 30s
+      rules:
+        - alert: RedisConnectionFailure
+          # Fire when the API service reports zero successful Redis operations
+          # for 2 consecutive minutes, which is a reliable proxy for
+          # "connection refused" without requiring log-scraping.
+          #
+          # This rule uses the custom gauge `redis_connected` which the
+          # omnivara-api NestJS app must expose (value 1 = connected, 0 = down).
+          # Implementation hint: use @nestjs/bull or ioredis health-check and
+          # expose it via prom-client as a Gauge named `redis_connected`.
+          #
+          # Fallback: if redis_connected is not yet instrumented, this rule
+          # will produce a NoData state (no false positives) — add the metric
+          # to the API health module as a follow-up task.
+          expr: |
+            redis_connected{job="omnivara-api"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            service: omnivara-api
+          annotations:
+            summary: "omnivara-api cannot connect to Redis"
+            description: >-
+              The omnivara-api service has reported Redis as unreachable for
+              more than 2 minutes (redis_connected == 0).
+              This will cause BullMQ job queues, session store, and cache to
+              fail.  Check ElastiCache health and security group rules.
+            runbook_url: "https://docs.omnivara.io/runbooks/redis-connection-failure"

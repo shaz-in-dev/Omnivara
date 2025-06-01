@@ -1,0 +1,196 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# network-policy.yaml — Kubernetes NetworkPolicy objects
+#
+# Prerequisites:
+#   • A CNI plugin that enforces NetworkPolicy must be installed (e.g. Calico,
+#     Cilium, or AWS VPC CNI with Network Policy support enabled on EKS 1.25+).
+#   • ingress-nginx is deployed in namespace "ingress-nginx".
+#   • All Omnivara pods run in namespace "omnivara" with the labels defined
+#     in *-deployment.yaml (app: omnivara-api / omnivara-web / omnivara-ai).
+#
+# Default posture enforced by these policies:
+#   • All non-matched ingress is denied for each selected pod set.
+#   • Egress is explicitly allowlisted per service; all other egress is denied.
+#
+# Apply with:
+#   kubectl apply -f infra/k8s/network-policy.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── 1. API NetworkPolicy ─────────────────────────────────────────────────────
+# Ingress:  ingress-nginx namespace pods  +  omnivara-web pods
+# Egress:   PostgreSQL 5432  |  Redis 6379  |  DNS 53 (UDP+TCP)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-network-policy
+  namespace: omnivara
+  labels:
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # Apply this policy to all API pods.
+  podSelector:
+    matchLabels:
+      app: omnivara-api
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow traffic from ingress-nginx controller pods (any namespace labelled
+    # kubernetes.io/metadata.name: ingress-nginx).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3001
+
+    # Allow traffic from omnivara-web pods within the same namespace.
+    # This supports SSR / API calls originating from the Next.js server side.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: omnivara
+          podSelector:
+            matchLabels:
+              app: omnivara-web
+      ports:
+        - protocol: TCP
+          port: 3001
+
+  egress:
+    # PostgreSQL (RDS) — outbound on 5432.
+    - ports:
+        - protocol: TCP
+          port: 5432
+
+    # Redis (ElastiCache) — outbound on 6379.
+    - ports:
+        - protocol: TCP
+          port: 6379
+
+    # DNS resolution — both UDP and TCP on port 53.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow outbound to the AI service so the API can proxy AI requests
+    # internally without going through ingress.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: omnivara-ai
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# ─── 2. Web NetworkPolicy ─────────────────────────────────────────────────────
+# Ingress:  ingress-nginx namespace pods only
+# Egress:   omnivara-api service  |  DNS 53
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-network-policy
+  namespace: omnivara
+  labels:
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  podSelector:
+    matchLabels:
+      app: omnivara-web
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Only accept external traffic that has already passed through ingress-nginx.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+
+  egress:
+    # Allow web pods to reach the API service within the same namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: omnivara-api
+      ports:
+        - protocol: TCP
+          # Target the API container port directly (not the Service port 80).
+          port: 3001
+
+    # DNS resolution.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# ─── 3. AI NetworkPolicy ──────────────────────────────────────────────────────
+# Ingress:  omnivara-api pods only
+# Egress:   PostgreSQL 5432  |  Redis 6379  |  HTTPS 443 (Anthropic / OpenAI)  |  DNS 53
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-network-policy
+  namespace: omnivara
+  labels:
+    app.kubernetes.io/part-of: omnivara
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  podSelector:
+    matchLabels:
+      app: omnivara-ai
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Only the API pod may call the AI service.  Direct browser-to-AI traffic
+    # is not permitted; all requests must be proxied through the API.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: omnivara-api
+      ports:
+        - protocol: TCP
+          port: 8000
+
+  egress:
+    # PostgreSQL — used for conversation history and tenant data retrieval.
+    - ports:
+        - protocol: TCP
+          port: 5432
+
+    # Redis — used for job queues (embedding tasks) and response caching.
+    - ports:
+        - protocol: TCP
+          port: 6379
+
+    # External HTTPS — required for Anthropic Claude and OpenAI API calls.
+    # In a stricter environment, replace 0.0.0.0/0 with the specific IP ranges
+    # published by Anthropic (api.anthropic.com) and OpenAI (api.openai.com).
+    - ports:
+        - protocol: TCP
+          port: 443
+
+    # DNS resolution.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

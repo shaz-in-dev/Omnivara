@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omnivara-config
+  namespace: omnivara
+data:
+  NODE_ENV: "production"
+  API_PORT: "3001"
+  WEB_PORT: "3000"
+  AI_PORT: "8000"
+  REDIS_HOST: "redis-master.omnivara.svc.cluster.local"
+  REDIS_PORT: "6379"
+  KAFKA_BROKERS: "kafka.omnivara.svc.cluster.local:9092"
+  TEMPORAL_ADDRESS: "temporal-frontend.omnivara.svc.cluster.local:7233"
+  TEMPORAL_NAMESPACE: "omnivara"
+  CORS_ORIGIN: "https://app.omnivara.io"
+  LOG_LEVEL: "info"
