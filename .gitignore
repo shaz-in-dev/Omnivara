@@ -1,0 +1,62 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+dist
+build
+.next
+out
+.turbo
+*.tsbuildinfo
+
+# Flutter
+**/android/.gradle
+**/android/local.properties
+**/android/captures
+**/android/gradlew
+**/android/gradlew.bat
+**/android/gradle/wrapper/gradle-wrapper.jar
+**/ios/Pods
+**/ios/.symlinks
+**/ios/Flutter/flutter_export_environment.sh
+**/macos/Pods
+**/.dart_tool
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/flutter_*.png
+**/pubspec.lock
+
+# Tauri
+**/src-tauri/target
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.vscode/settings.json
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output
+
+# Misc
+.cache
+tmp/
+temp/
