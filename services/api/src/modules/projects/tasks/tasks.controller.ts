@@ -30,22 +30,40 @@ export class TasksController {
   }
 
   @Patch(':id/status')
-  updateStatus(@CurrentOrg() orgId: string, @Param('id') id: string, @Body('status') status: string) {
-    return this.tasks.updateStatus(orgId, id, status);
+  updateStatus(
+    @CurrentOrg() orgId: string,
+    @Param('projectId') projectId: string,
+    @Param('id') id: string,
+    @Body('status') status: string,
+  ) {
+    return this.tasks.updateStatus(orgId, projectId, id, status);
   }
 
   @Patch(':id')
   updateTask(
     @CurrentOrg() orgId: string,
+    @Param('projectId') projectId: string,
     @Param('id') id: string,
-    @Body() body: { sprintId?: string | null; status?: string; priority?: string; title?: string; description?: string },
+    @Body() body: {
+      sprintId?: string | null;
+      status?: string;
+      priority?: string;
+      assigneeId?: string | null;
+      dueDate?: string | null;
+      title?: string;
+      description?: string | null;
+    },
   ) {
-    return this.tasks.updateTask(orgId, id, body);
+    return this.tasks.updateTask(orgId, projectId, id, body);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deleteTask(@CurrentOrg() orgId: string, @Param('id') id: string) {
-    return this.tasks.deleteTask(orgId, id);
+  deleteTask(
+    @CurrentOrg() orgId: string,
+    @Param('projectId') projectId: string,
+    @Param('id') id: string,
+  ) {
+    return this.tasks.deleteTask(orgId, projectId, id);
   }
 }

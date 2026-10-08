@@ -30,22 +30,34 @@ function toApiStatus(s: TaskStatus): string {
   return map[s];
 }
 
+function toApiPriority(priority: string): string {
+  return priority === 'urgent' ? 'critical' : priority;
+}
+
 export function CreateTaskModal({ defaultStatus = 'TODO', onClose, onSubmit, isPending = false }: Props) {
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState<TaskStatus>(defaultStatus);
   const [priority, setPriority] = useState('medium');
   const [description, setDescription] = useState('');
+  const [submitError, setSubmitError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    await onSubmit({
-      title: title.trim(),
-      status: toApiStatus(status),
-      priority,
-      ...(description.trim() ? { description: description.trim() } : {}),
-    });
-    onClose();
+    setSubmitError('');
+    try {
+      await onSubmit({
+        title: title.trim(),
+        status: toApiStatus(status),
+        priority: toApiPriority(priority),
+        ...(description.trim() ? { description: description.trim() } : {}),
+      });
+      onClose();
+    } catch (error) {
+      const message = (error as { response?: { data?: { message?: string | string[] } } })
+        ?.response?.data?.message;
+      setSubmitError(Array.isArray(message) ? message.join(', ') : message ?? 'Could not create task. Please try again.');
+    }
   };
 
   return (
@@ -70,6 +82,11 @@ export function CreateTaskModal({ defaultStatus = 'TODO', onClose, onSubmit, isP
 
         {/* Form */}
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 p-6">
+          {submitError && (
+            <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+              {submitError}
+            </p>
+          )}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
               Title <span className="text-red-500">*</span>

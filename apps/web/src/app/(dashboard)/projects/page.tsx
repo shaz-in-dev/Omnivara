@@ -53,6 +53,7 @@ function toTaskPriority(p: string): TaskPriority {
     low:    'LOW',
     medium: 'MEDIUM',
     high:   'HIGH',
+    critical: 'URGENT',
     urgent: 'URGENT',
   };
   return map[p] ?? 'MEDIUM';
@@ -76,7 +77,7 @@ function toUITask(apiTask: ApiTask): Task {
           },
         }
       : {}),
-    ...(apiTask.tags.length > 0 ? { tags: apiTask.tags } : {}),
+    ...(apiTask.tags?.length ? { tags: apiTask.tags } : {}),
   };
 }
 

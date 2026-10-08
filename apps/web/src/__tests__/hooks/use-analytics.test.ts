@@ -71,6 +71,22 @@ describe('useAnalytics', () => {
     expect(result.current.data?.kpis.mrr.value).toBe(12_000);
   });
 
+  it('returns real data when the API responds without a data envelope', async () => {
+    const realData = {
+      ...ANALYTICS_PLACEHOLDER,
+      kpis: { ...ANALYTICS_PLACEHOLDER.kpis, mrr: { value: 12_000, change: 15, sparkline: [1, 2, 3, 4, 5, 6, 7] } },
+    };
+    mockGet.mockResolvedValue({ data: realData });
+
+    const { result } = renderHook(
+      () => useAnalytics('org-1'),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isFetching).toBe(false));
+    expect(result.current.data?.kpis.mrr.value).toBe(12_000);
+  });
+
   it('does not fetch when orgId is empty', () => {
     renderHook(() => useAnalytics(''), { wrapper: makeWrapper() });
     expect(mockGet).not.toHaveBeenCalled();

@@ -24,6 +24,7 @@ const PRIORITY_MAP: Record<string, TaskPriority> = {
   low:    'LOW',
   medium: 'MEDIUM',
   high:   'HIGH',
+  critical: 'URGENT',
   urgent: 'URGENT',
 };
 

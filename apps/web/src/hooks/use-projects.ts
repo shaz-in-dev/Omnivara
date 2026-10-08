@@ -23,11 +23,11 @@ export interface ApiTask {
   title: string;
   description: string | null;
   status: 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done' | 'cancelled';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
+  priority: 'critical' | 'low' | 'medium' | 'high';
   assigneeId: string | null;
   assignee?: { id: string; name: string; avatarUrl: string | null } | null;
   dueDate: string | null;
-  tags: string[];
+  tags?: string[];
   points: number | null;
   sprintId: string | null;
   estimatedHours: number | null;
@@ -63,6 +63,42 @@ interface ListProjectsParams {
   limit?: number | undefined;
 }
 
+interface ApiListResponse<T> {
+  data?: T[];
+  meta?: {
+    total?: number;
+    page?: number;
+    limit?: number;
+    totalPages?: number;
+  };
+}
+
+function normalizeListResponse<T>(
+  payload: unknown,
+  meta?: ApiListResponse<T>['meta'],
+): { items: T[]; total: number; page: number; totalPages: number } {
+  if (Array.isArray(payload)) {
+    return {
+      items: payload as T[],
+      total: meta?.total ?? payload.length,
+      page: meta?.page ?? 1,
+      totalPages: meta?.totalPages ?? 1,
+    };
+  }
+
+  if (payload && typeof payload === 'object' && 'items' in payload) {
+    const response = payload as { items: T[]; total?: number; page?: number; totalPages?: number };
+    return {
+      items: response.items,
+      total: response.total ?? meta?.total ?? response.items.length,
+      page: response.page ?? meta?.page ?? 1,
+      totalPages: response.totalPages ?? meta?.totalPages ?? 1,
+    };
+  }
+
+  throw new Error('Unexpected list response from projects API');
+}
+
 export function useProjects(params: ListProjectsParams) {
   return useQuery({
     queryKey: ['projects', params],
@@ -76,7 +112,7 @@ export function useProjects(params: ListProjectsParams) {
         ...orgHeaders(params.orgId),
       });
       const payload = data?.data ?? data;
-      return payload as { items: ApiProject[]; total: number; page: number; totalPages: number };
+      return normalizeListResponse<ApiProject>(payload, data?.meta);
     },
     enabled: !!params.orgId,
   });
@@ -113,7 +149,7 @@ export function useTasks(orgId: string, projectId: string, sprintId?: string) {
         ...orgHeaders(orgId),
       });
       const payload = data?.data ?? data;
-      return payload as { items: ApiTask[]; total: number };
+      return normalizeListResponse<ApiTask>(payload, data?.meta);
     },
     enabled: !!orgId && !!projectId,
   });

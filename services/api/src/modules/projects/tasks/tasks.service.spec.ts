@@ -3,9 +3,16 @@ import { TasksService } from './tasks.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 const mockPrisma = {
+  project: {
+    findFirst: jest.fn(),
+  },
+  organizationMember: {
+    findFirst: jest.fn(),
+  },
   task: {
     findMany:   jest.fn(),
     count:      jest.fn(),
+    findFirst:  jest.fn(),
     create:     jest.fn(),
     update:     jest.fn(),
     deleteMany: jest.fn(),
@@ -31,6 +38,9 @@ describe('TasksService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.project.findFirst.mockResolvedValue({ id: 'proj-1', orgId: 'org-1' });
+    mockPrisma.organizationMember.findFirst.mockResolvedValue({ id: 'member-1' });
+    mockPrisma.task.findFirst.mockResolvedValue(makeTask());
     const module = await Test.createTestingModule({
       providers: [
         TasksService,
@@ -47,7 +57,7 @@ describe('TasksService', () => {
 
       const result = await service.findByProject('org-1', 'proj-1');
       expect(result.data).toHaveLength(1);
-      expect(result.total).toBe(1);
+      expect(result.meta.total).toBe(1);
       expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ orgId: 'org-1', projectId: 'proj-1' }),
@@ -98,17 +108,33 @@ describe('TasksService', () => {
           data: expect.objectContaining({ orgId: 'org-1', projectId: 'proj-1', title: 'New task' }),
         }),
       );
+      expect(mockPrisma.project.findFirst).toHaveBeenCalledWith({ where: { id: 'proj-1', orgId: 'org-1' } });
+    });
+
+    it('rejects creation for a project outside the organization', async () => {
+      mockPrisma.project.findFirst.mockResolvedValue(null);
+      await expect(service.create('org-1', { projectId: 'foreign-project', title: 'New task' }))
+        .rejects.toThrow('Project not found');
+      expect(mockPrisma.task.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an assignee who is not an organization member', async () => {
+      mockPrisma.organizationMember.findFirst.mockResolvedValue(null);
+      await expect(service.create('org-1', {
+        projectId: 'proj-1', title: 'New task', assigneeId: 'foreign-user',
+      })).rejects.toThrow('Assignee must be a member of this organization');
+      expect(mockPrisma.task.create).not.toHaveBeenCalled();
     });
   });
 
   describe('updateStatus', () => {
     it('updates task status', async () => {
       mockPrisma.task.update.mockResolvedValue(makeTask({ status: 'in_progress' }));
-      await service.updateStatus('org-1', 'task-1', 'in_progress');
-      expect(mockPrisma.task.update).toHaveBeenCalledWith({
+      await service.updateStatus('org-1', 'proj-1', 'task-1', 'in_progress');
+      expect(mockPrisma.task.update).toHaveBeenCalledWith(expect.objectContaining({
         where: { id: 'task-1' },
-        data:  { status: 'in_progress' },
-      });
+        data: { status: 'in_progress' },
+      }));
     });
   });
 
@@ -117,7 +143,7 @@ describe('TasksService', () => {
       const updated = makeTask({ status: 'done', priority: 'high', sprintId: 'sprint-2' });
       mockPrisma.task.update.mockResolvedValue(updated);
 
-      const result = await service.updateTask('org-1', 'task-1', {
+      const result = await service.updateTask('org-1', 'proj-1', 'task-1', {
         status: 'done', priority: 'high', sprintId: 'sprint-2',
       });
       expect(result.status).toBe('done');
@@ -126,21 +152,66 @@ describe('TasksService', () => {
 
     it('can move task to backlog by setting sprintId=null', async () => {
       mockPrisma.task.update.mockResolvedValue(makeTask({ sprintId: null }));
-      await service.updateTask('org-1', 'task-1', { sprintId: null });
+      await service.updateTask('org-1', 'proj-1', 'task-1', { sprintId: null });
       expect(mockPrisma.task.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ sprintId: null }),
         }),
       );
     });
+
+    it('updates title, description, date, and assignee and includes the assigned user', async () => {
+      mockPrisma.task.update.mockResolvedValue(makeTask({
+        title: 'Updated title',
+        description: 'Updated description',
+        dueDate: new Date('2026-10-09T00:00:00.000Z'),
+        assigneeId: 'member-user',
+        assignee: { id: 'member-user', name: 'Member User', avatarUrl: null },
+      }));
+      await service.updateTask('org-1', 'proj-1', 'task-1', {
+        title: 'Updated title',
+        description: 'Updated description',
+        dueDate: '2026-10-09T00:00:00.000Z',
+        assigneeId: 'member-user',
+      });
+      expect(mockPrisma.task.findFirst).toHaveBeenCalledWith({
+        where: { id: 'task-1', orgId: 'org-1', projectId: 'proj-1' },
+      });
+      expect(mockPrisma.organizationMember.findFirst).toHaveBeenCalledWith({
+        where: { orgId: 'org-1', userId: 'member-user' },
+        select: { id: true },
+      });
+      expect(mockPrisma.task.update).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          title: 'Updated title',
+          description: 'Updated description',
+          dueDate: new Date('2026-10-09T00:00:00.000Z'),
+          assigneeId: 'member-user',
+        }),
+      }));
+    });
+
+    it('does not update a task outside the organization and project', async () => {
+      mockPrisma.task.findFirst.mockResolvedValue(null);
+      await expect(service.updateTask('org-1', 'proj-1', 'foreign-task', { title: 'Nope' }))
+        .rejects.toThrow('Task not found');
+      expect(mockPrisma.task.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects assignment to a user outside the organization', async () => {
+      mockPrisma.organizationMember.findFirst.mockResolvedValue(null);
+      await expect(service.updateTask('org-1', 'proj-1', 'task-1', { assigneeId: 'foreign-user' }))
+        .rejects.toThrow('Assignee must be a member of this organization');
+      expect(mockPrisma.task.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteTask', () => {
     it('deletes task using deleteMany (scoped to orgId)', async () => {
       mockPrisma.task.deleteMany.mockResolvedValue({ count: 1 });
-      await service.deleteTask('org-1', 'task-1');
+      await service.deleteTask('org-1', 'proj-1', 'task-1');
       expect(mockPrisma.task.deleteMany).toHaveBeenCalledWith({
-        where: { id: 'task-1', orgId: 'org-1' },
+        where: { id: 'task-1', orgId: 'org-1', projectId: 'proj-1' },
       });
     });
   });

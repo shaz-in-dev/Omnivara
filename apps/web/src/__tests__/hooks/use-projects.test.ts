@@ -61,6 +61,20 @@ describe('useProjects', () => {
     expect(result.current.data?.items[0].name).toBe('Alpha Project');
   });
 
+  it('normalizes the API paginated project response', async () => {
+    mockGet.mockResolvedValue({
+      data: { data: [MOCK_PROJECT], meta: { total: 1, page: 1, limit: 25, totalPages: 1 } },
+    });
+    const { result } = renderHook(() => useProjects({ orgId: 'org-1' }), { wrapper: makeWrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual({
+      items: [MOCK_PROJECT],
+      total: 1,
+      page: 1,
+      totalPages: 1,
+    });
+  });
+
   it('does not fetch when orgId is empty', () => {
     renderHook(() => useProjects({ orgId: '' }), { wrapper: makeWrapper() });
     expect(mockGet).not.toHaveBeenCalled();
@@ -89,6 +103,20 @@ describe('useTasks', () => {
     const { result } = renderHook(() => useTasks('org-1', 'proj-1'), { wrapper: makeWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.items[0].title).toBe('Build feature');
+  });
+
+  it('normalizes the API paginated task response', async () => {
+    mockGet.mockResolvedValue({
+      data: { data: [MOCK_TASK], meta: { total: 1, page: 1, limit: 100, totalPages: 1 } },
+    });
+    const { result } = renderHook(() => useTasks('org-1', 'proj-1'), { wrapper: makeWrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual({
+      items: [MOCK_TASK],
+      total: 1,
+      page: 1,
+      totalPages: 1,
+    });
   });
 });
 

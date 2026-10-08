@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Omnivara web app",
+			"type": "shell",
+			"command": "export PATH=\"/opt/homebrew/opt/node@20/bin:$PATH\" && export NEXT_PUBLIC_API_URL=\"http://localhost:4000/api/v1\" && corepack pnpm --filter @omnivara/web dev",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Run Omnivara API",
+			"type": "shell",
+			"command": "export PATH=\"/opt/homebrew/opt/node@20/bin:$PATH\" && corepack pnpm --filter @omnivara/api dev",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

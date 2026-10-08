@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { SlideOver } from '@/components/shared/slide-over';
 import { useTaskComments, useCreateTaskComment, useTaskChecklist, useCreateChecklistItem, useUpdateChecklistItem } from '@/hooks/use-task-items';
+import { useUpdateTask } from '@/hooks/use-projects';
+import { useMembers } from '@/hooks/use-members';
 import type { Task, TaskPriority, TaskStatus } from './task-card';
 
 const STATUS_OPTIONS: { value: TaskStatus; label: string; color: string }[] = [
@@ -43,19 +45,32 @@ interface Props {
 }
 
 export function TaskDetail({ orgId, projectId, task, open, onClose, onUpdate, onDelete }: Props) {
-  const [localTask, setLocalTask] = useState<Task | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editValues, setEditValues] = useState({
+    title: '',
+    description: '',
+    dueDate: '',
+    status: 'TODO' as TaskStatus,
+    priority: 'MEDIUM' as TaskPriority,
+    assigneeId: '',
+  });
+  const [saveError, setSaveError] = useState('');
   const [comment, setComment] = useState('');
   const [newChecklistText, setNewChecklistText] = useState('');
   const [tab, setTab] = useState<'overview' | 'comments' | 'activity'>('overview');
 
-  // Sync local task with prop when a new task is opened
-  useEffect(() => { setLocalTask(null); }, [task?.id]);
+  useEffect(() => {
+    setEditing(false);
+    setSaveError('');
+  }, [task?.id]);
 
-  const effectiveTask = localTask ?? task;
+  const effectiveTask = task;
 
   const { data: comments = [], isLoading: commentsLoading } = useTaskComments(
     orgId, projectId, effectiveTask?.id ?? '',
   );
+  const { data: members = [], isLoading: membersLoading } = useMembers(orgId);
+  const updateTask = useUpdateTask(orgId, projectId);
   const createComment = useCreateTaskComment(orgId, projectId);
   const { data: checklist = [], isLoading: checklistLoading } = useTaskChecklist(
     orgId, projectId, effectiveTask?.id ?? '',
@@ -65,10 +80,86 @@ export function TaskDetail({ orgId, projectId, task, open, onClose, onUpdate, on
 
   if (!effectiveTask) return null;
 
-  const updateField = <K extends keyof Task>(key: K, value: Task[K]) => {
-    const updated = { ...effectiveTask, [key]: value };
-    setLocalTask(updated);
-    onUpdate?.(updated);
+  const beginEditing = () => {
+    setSaveError('');
+    setEditValues({
+      title: effectiveTask.title,
+      description: effectiveTask.description ?? '',
+      dueDate: effectiveTask.dueDate ? effectiveTask.dueDate.slice(0, 10) : '',
+      status: effectiveTask.status,
+      priority: effectiveTask.priority,
+      assigneeId: effectiveTask.assignee?.id ?? '',
+    });
+    setEditing(true);
+  };
+
+  const currentValues = {
+    title: effectiveTask.title,
+    description: effectiveTask.description ?? '',
+    dueDate: effectiveTask.dueDate ? effectiveTask.dueDate.slice(0, 10) : '',
+    status: effectiveTask.status,
+    priority: effectiveTask.priority,
+    assigneeId: effectiveTask.assignee?.id ?? '',
+  };
+
+  const saveTask = async (values = currentValues) => {
+    setSaveError('');
+    try {
+      const updated = await updateTask.mutateAsync({
+        id: effectiveTask.id,
+        title: values.title.trim(),
+        description: values.description.trim() || null,
+        dueDate: values.dueDate ? new Date(`${values.dueDate}T00:00:00`).toISOString() : null,
+        status: ({
+          TODO: 'todo',
+          IN_PROGRESS: 'in_progress',
+          IN_REVIEW: 'in_review',
+          DONE: 'done',
+        } as const)[values.status],
+        priority: ({
+          LOW: 'low',
+          MEDIUM: 'medium',
+          HIGH: 'high',
+          URGENT: 'critical',
+        } as const)[values.priority],
+        assigneeId: values.assigneeId || null,
+      });
+      const nameParts = (updated.assignee?.name ?? '').trim().split(/\s+/);
+      const { assignee: _previousAssignee, ...taskWithoutAssignee } = effectiveTask;
+      onUpdate?.({
+        ...taskWithoutAssignee,
+        id: updated.id,
+        title: updated.title,
+        ...(updated.description ? { description: updated.description } : {}),
+        ...(updated.dueDate ? { dueDate: updated.dueDate } : {}),
+        status: ({
+          backlog: 'TODO',
+          todo: 'TODO',
+          in_progress: 'IN_PROGRESS',
+          in_review: 'IN_REVIEW',
+          done: 'DONE',
+          cancelled: 'DONE',
+        } as const)[updated.status],
+        priority: ({
+          low: 'LOW',
+          medium: 'MEDIUM',
+          high: 'HIGH',
+          critical: 'URGENT',
+        } as const)[updated.priority],
+        ...(updated.assignee ? {
+          assignee: {
+            id: updated.assignee.id,
+            firstName: nameParts[0] ?? '',
+            lastName: nameParts.slice(1).join(' '),
+          },
+        } : {}),
+      });
+      setEditing(false);
+    } catch (error) {
+      const message = (error as { response?: { data?: { message?: string | string[] } } })
+        ?.response?.data?.message;
+      setSaveError(Array.isArray(message) ? message.join(', ') : message ?? 'Could not save task changes. Please try again.');
+    }
   };
 
   const doneCount = checklist.filter((c) => c.done).length;
@@ -96,19 +187,42 @@ export function TaskDetail({ orgId, projectId, task, open, onClose, onUpdate, on
       footer={
         <div className="flex items-center justify-between">
           <div className="flex gap-2">
-            <button className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700">
-              <Edit2 className="h-3.5 w-3.5" /> Edit
-            </button>
+            {editing ? (
+              <>
+                <button
+                  onClick={() => { setEditing(false); setSaveError(''); }}
+                  disabled={updateTask.isPending}
+                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void saveTask()}
+                  disabled={!editValues.title.trim() || updateTask.isPending}
+                  className="rounded-xl bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                >
+                  {updateTask.isPending ? 'Saving…' : 'Save changes'}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={beginEditing}
+                className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700"
+              >
+                <Edit2 className="h-3.5 w-3.5" /> Edit
+              </button>
+            )}
             <button
               onClick={() => { onDelete?.(effectiveTask.id); onClose(); }}
+              disabled={updateTask.isPending}
               className="flex items-center gap-1.5 rounded-xl border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:border-red-800"
             >
               <Trash2 className="h-3.5 w-3.5" /> Delete
             </button>
           </div>
           <button
-            onClick={() => updateField('status', 'DONE')}
-            disabled={effectiveTask.status === 'DONE'}
+            onClick={() => void saveTask({ ...currentValues, status: 'DONE' })}
+            disabled={effectiveTask.status === 'DONE' || updateTask.isPending || editing}
             className="flex items-center gap-2 rounded-xl bg-green-500 px-4 py-2 text-sm font-semibold text-white hover:bg-green-600 disabled:opacity-50"
           >
             <CheckSquare className="h-4 w-4" />
@@ -118,39 +232,45 @@ export function TaskDetail({ orgId, projectId, task, open, onClose, onUpdate, on
       }
     >
       <div className="divide-y divide-gray-100 dark:divide-gray-800">
+        {saveError && (
+          <p role="alert" className="mx-6 mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+            {saveError}
+          </p>
+        )}
         {/* Status + Priority row */}
         <div className="flex flex-wrap items-center gap-3 px-6 py-4">
           <div className="relative">
             <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Status</label>
-            <select
-              value={effectiveTask.status}
-              onChange={(e) => updateField('status', e.target.value as TaskStatus)}
-              className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
+            {editing ? (
+              <select
+                value={editValues.status}
+                onChange={(e) => setEditValues((v) => ({ ...v, status: e.target.value as TaskStatus }))}
+                className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            ) : (
+              <span className="block rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+                {STATUS_OPTIONS.find((s) => s.value === effectiveTask.status)?.label}
+              </span>
+            )}
           </div>
 
           <div>
             <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Priority</label>
-            <div className="flex gap-1">
-              {PRIORITY_OPTIONS.map((p) => (
-                <button
-                  key={p.value}
-                  onClick={() => updateField('priority', p.value)}
-                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                    effectiveTask.priority === p.value
-                      ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-900/20 dark:text-brand-300'
-                      : 'border-gray-200 text-gray-500 hover:border-gray-300 dark:border-gray-700'
-                  }`}
-                >
-                  <span className={`h-2 w-2 rounded-full ${p.dot}`} />
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            {editing ? (
+              <select
+                value={editValues.priority}
+                onChange={(e) => setEditValues((v) => ({ ...v, priority: e.target.value as TaskPriority }))}
+                className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            ) : (
+              <span className="block rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+                {PRIORITY_OPTIONS.find((p) => p.value === effectiveTask.priority)?.label}
+              </span>
+            )}
           </div>
         </div>
 
@@ -158,31 +278,52 @@ export function TaskDetail({ orgId, projectId, task, open, onClose, onUpdate, on
         <div className="grid grid-cols-2 gap-4 px-6 py-4 text-sm">
           <div>
             <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-gray-400">Assignee</p>
-            <div className="flex items-center gap-2">
-              {effectiveTask.assignee ? (
-                <>
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-500 text-[10px] font-bold text-white">
-                    {effectiveTask.assignee.firstName[0]}{effectiveTask.assignee.lastName[0]}
-                  </div>
-                  <span className="text-gray-700 dark:text-gray-300">{effectiveTask.assignee.firstName} {effectiveTask.assignee.lastName}</span>
-                </>
-              ) : (
-                <button className="flex items-center gap-1.5 text-gray-400 hover:text-brand-600">
-                  <User className="h-4 w-4" /> Assign
-                </button>
-              )}
-            </div>
+            {editing ? (
+              <select
+                aria-label="Assignee"
+                value={editValues.assigneeId}
+                onChange={(e) => setEditValues((v) => ({ ...v, assigneeId: e.target.value }))}
+                disabled={membersLoading}
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm outline-none focus:border-brand-500 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                <option value="">{membersLoading ? 'Loading members…' : 'Unassigned'}</option>
+                {members.map((member) => (
+                  <option key={member.user.id} value={member.user.id}>{member.user.name}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="flex items-center gap-2">
+                {effectiveTask.assignee ? (
+                  <>
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-500 text-[10px] font-bold text-white">
+                      {effectiveTask.assignee.firstName[0]}{effectiveTask.assignee.lastName[0]}
+                    </div>
+                    <span className="text-gray-700 dark:text-gray-300">{effectiveTask.assignee.firstName} {effectiveTask.assignee.lastName}</span>
+                  </>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-gray-400"><User className="h-4 w-4" /> Unassigned</span>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-gray-400">Due date</p>
             <div className="flex items-center gap-1.5">
               <Calendar className="h-4 w-4 text-gray-300" />
-              {effectiveTask.dueDate ? (
+              {editing ? (
+                <input
+                  aria-label="Due date"
+                  type="date"
+                  value={editValues.dueDate}
+                  onChange={(e) => setEditValues((v) => ({ ...v, dueDate: e.target.value }))}
+                  className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                />
+              ) : effectiveTask.dueDate ? (
                 <span className={`${new Date(effectiveTask.dueDate) < new Date() && effectiveTask.status !== 'DONE' ? 'text-red-500' : 'text-gray-700 dark:text-gray-300'}`}>
                   {new Date(effectiveTask.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                 </span>
               ) : (
-                <button className="text-gray-400 hover:text-brand-600">Set date</button>
+                <span className="text-gray-400">No due date</span>
               )}
             </div>
           </div>
@@ -223,12 +364,27 @@ export function TaskDetail({ orgId, projectId, task, open, onClose, onUpdate, on
             {/* Description */}
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Description</p>
-              {effectiveTask.description ? (
+              {editing ? (
+                <div>
+                  <input
+                    aria-label="Task title"
+                    value={editValues.title}
+                    onChange={(e) => setEditValues((v) => ({ ...v, title: e.target.value }))}
+                    className="mb-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  />
+                  <textarea
+                    aria-label="Task description"
+                    value={editValues.description}
+                    onChange={(e) => setEditValues((v) => ({ ...v, description: e.target.value }))}
+                    rows={4}
+                    placeholder="Add a description…"
+                    className="w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  />
+                </div>
+              ) : effectiveTask.description ? (
                 <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">{effectiveTask.description}</p>
               ) : (
-                <button className="text-sm text-gray-300 hover:text-brand-500 dark:text-gray-600">
-                  + Add a description…
-                </button>
+                <p className="text-sm text-gray-400">No description</p>
               )}
             </div>
 

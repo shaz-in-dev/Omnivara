@@ -76,8 +76,10 @@ export function useAnalytics(orgId: string) {
   return useQuery({
     queryKey: ['analytics', orgId],
     queryFn: async () => {
-      const { data } = await api.get<{ data: AnalyticsData }>(`/orgs/${orgId}/analytics`);
-      return data.data;
+      const { data } = await api.get<AnalyticsData | { data: AnalyticsData }>(
+        `/orgs/${orgId}/analytics`,
+      );
+      return 'data' in data ? data.data : data;
     },
     enabled: !!orgId,
     staleTime: 5 * 60_000, // 5 min — analytics can be slightly stale

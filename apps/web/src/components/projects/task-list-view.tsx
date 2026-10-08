@@ -128,7 +128,10 @@ function TaskRow({ task, selected, onSelect, onClick, onStatusChange }: RowProps
             <span className="text-xs text-gray-600 dark:text-gray-400 truncate">{task.assignee.firstName}</span>
           </div>
         ) : (
-          <button className="flex items-center gap-1 text-xs text-gray-300 hover:text-brand-500">
+          <button
+            onClick={() => onClick(task)}
+            className="flex items-center gap-1 text-xs text-gray-300 hover:text-brand-500"
+          >
             <User className="h-3.5 w-3.5" /> Assign
           </button>
         )}
